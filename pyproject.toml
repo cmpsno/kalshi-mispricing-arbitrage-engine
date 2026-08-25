@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kalshi-mispricing-arbitrage-engine"
+version = "0.1.0"
+description = "A test-first structural mispricing research engine for Kalshi"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=42,<47",
+    "httpx>=0.27,<1",
+    "python-dotenv>=1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+]
+
+[project.scripts]
+kalshi-markets = "kalshi_client.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["kalshi_client*"]
