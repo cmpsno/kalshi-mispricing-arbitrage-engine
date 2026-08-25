@@ -50,7 +50,7 @@ def signing_message(timestamp_ms: int | str, method: str, path_or_url: str) -> b
     if not path.startswith("/"):
         raise ValueError("the signed request path must start with '/'")
 
-    return f"{timestamp}{normalized_method}{path}".encode("utf-8")
+    return f"{timestamp}{normalized_method}{path}".encode()
 
 
 def sign_request(

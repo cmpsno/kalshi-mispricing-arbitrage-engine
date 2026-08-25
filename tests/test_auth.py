@@ -8,7 +8,12 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from kalshi_client.auth import PrivateKeyError, load_private_key, sign_request, signing_message
+from kalshi_client.auth import (
+    PrivateKeyError,
+    load_private_key,
+    sign_request,
+    signing_message,
+)
 
 
 def test_signing_message_normalizes_method_and_removes_query() -> None:

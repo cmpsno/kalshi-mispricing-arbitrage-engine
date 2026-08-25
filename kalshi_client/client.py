@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from .auth import auth_headers, load_private_key
 from .config import Settings
-
 
 MarketStatus = Literal["unopened", "open", "closed", "settled"]
 
@@ -49,7 +48,7 @@ class KalshiClient:
         )
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "KalshiClient":
+    def from_settings(cls, settings: Settings) -> KalshiClient:
         return cls(
             api_key_id=settings.api_key_id,
             private_key=load_private_key(settings.private_key_path),
@@ -57,7 +56,7 @@ class KalshiClient:
             timeout_seconds=settings.timeout_seconds,
         )
 
-    def __enter__(self) -> "KalshiClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_: object) -> None:

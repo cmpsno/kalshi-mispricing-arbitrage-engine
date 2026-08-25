@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-
 DEMO_BASE_URL = "https://external-api.demo.kalshi.co/trade-api/v2"
 
 
@@ -25,7 +24,9 @@ class Settings:
     def __post_init__(self) -> None:
         raw_private_key_path = str(self.private_key_path).strip()
         object.__setattr__(self, "api_key_id", self.api_key_id.strip())
-        object.__setattr__(self, "private_key_path", Path(raw_private_key_path).expanduser())
+        object.__setattr__(
+            self, "private_key_path", Path(raw_private_key_path).expanduser()
+        )
         object.__setattr__(self, "base_url", self.base_url.strip().rstrip("/"))
 
         if not self.api_key_id:
@@ -33,7 +34,9 @@ class Settings:
         if raw_private_key_path in {"", "."}:
             raise ConfigError("KALSHI_PRIVATE_KEY_PATH is required")
         if self.timeout_seconds <= 0:
-            raise ConfigError("KALSHI_REQUEST_TIMEOUT_SECONDS must be greater than zero")
+            raise ConfigError(
+                "KALSHI_REQUEST_TIMEOUT_SECONDS must be greater than zero"
+            )
 
         parsed = urlsplit(self.base_url)
         if parsed.scheme != "https" or not parsed.netloc:
@@ -44,7 +47,7 @@ class Settings:
             raise ConfigError("KALSHI_BASE_URL must end with /trade-api/v2")
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         """Read settings from the process environment."""
 
         api_key_id = os.getenv("KALSHI_API_KEY_ID", "")

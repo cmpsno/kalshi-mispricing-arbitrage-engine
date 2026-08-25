@@ -9,7 +9,6 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from kalshi_client import DEMO_BASE_URL, KalshiAPIError, KalshiClient
 
-
 FIXED_TIMESTAMP = 1_703_123_456_789
 
 
@@ -48,13 +47,15 @@ def test_get_markets_sends_authenticated_demo_request(
 
 
 def test_get_markets_rejects_invalid_limit(private_key: rsa.RSAPrivateKey) -> None:
-    with KalshiClient(
-        api_key_id="demo-key-id",
-        private_key=private_key,
-        base_url=DEMO_BASE_URL,
-    ) as client:
-        with pytest.raises(ValueError, match="between 1 and 1000"):
-            client.get_markets(limit=0)
+    with (
+        KalshiClient(
+            api_key_id="demo-key-id",
+            private_key=private_key,
+            base_url=DEMO_BASE_URL,
+        ) as client,
+        pytest.raises(ValueError, match="between 1 and 1000"),
+    ):
+        client.get_markets(limit=0)
 
 
 def test_api_error_includes_status_and_bounded_body(
@@ -63,13 +64,15 @@ def test_api_error_includes_status_and_bounded_body(
     transport = httpx.MockTransport(
         lambda request: httpx.Response(401, text="invalid signature", request=request)
     )
-    with KalshiClient(
-        api_key_id="demo-key-id",
-        private_key=private_key,
-        base_url=DEMO_BASE_URL,
-        transport=transport,
-    ) as client:
-        with pytest.raises(KalshiAPIError, match="HTTP 401: invalid signature") as exc_info:
-            client.get_markets()
+    with (
+        KalshiClient(
+            api_key_id="demo-key-id",
+            private_key=private_key,
+            base_url=DEMO_BASE_URL,
+            transport=transport,
+        ) as client,
+        pytest.raises(KalshiAPIError, match="HTTP 401: invalid signature") as exc_info,
+    ):
+        client.get_markets()
 
     assert exc_info.value.status_code == 401

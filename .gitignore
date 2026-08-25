@@ -12,3 +12,6 @@ build/
 *.egg-info/
 *.sqlite
 *.sqlite3
+kalshi_arbitrage.db
+*.db-shm
+*.db-wal
