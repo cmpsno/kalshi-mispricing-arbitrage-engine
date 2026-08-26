@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-import uuid
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Self
@@ -20,6 +19,8 @@ from .models import (
     Market,
     OrderBook,
     OrderBookLevel,
+    OrderExecutionResult,
+    OrderRequest,
     Trade,
     count_to_int,
     dollars_to_cents,
@@ -194,52 +195,55 @@ class KalshiClient:
         )
         return [Trade.from_api(item) for item in payload.get("trades", [])]
 
-    async def place_order(
-        self,
-        ticker: str,
-        side: str,
-        type: str,
-        price: int,
-        quantity: int,
-    ) -> dict[str, Any]:
-        """Build a current Kalshi order payload without transmitting it.
+    async def place_orders(
+        self, orders: list[OrderRequest]
+    ) -> list[OrderExecutionResult]:
+        """Transmit validated IOC limit orders to Kalshi's batch endpoint."""
 
-        Phase 6 remains simulation-only. This deliberately prevents an environment
-        mistake from placing a real-money order before Phase 7 risk controls exist.
-        """
+        if not orders:
+            raise ValueError("at least one order is required")
+        client_ids = [order.client_order_id for order in orders]
+        if len(client_ids) != len(set(client_ids)):
+            raise ValueError("client_order_id values must be unique")
 
-        if type not in {"limit", "market"}:
-            raise ValueError("type must be limit or market")
-        if not 1 <= price <= 99:
-            raise ValueError("price must be between 1 and 99 cents")
-        if quantity < 1:
-            raise ValueError("quantity must be at least 1")
+        payload = await self._request(
+            "POST",
+            "/portfolio/events/orders/batched",
+            json={"orders": [order.to_api_payload() for order in orders]},
+        )
+        raw_results = payload.get("orders", [])
+        if not isinstance(raw_results, list) or len(raw_results) != len(orders):
+            raise KalshiAPIError(502, "batch response did not match submitted orders")
 
-        directions = {
-            "yes": ("buy", "yes"),
-            "no": ("buy", "no"),
-            "buy_yes": ("buy", "yes"),
-            "buy_no": ("buy", "no"),
-            "sell_yes": ("sell", "yes"),
-            "sell_no": ("sell", "no"),
-        }
-        try:
-            action, outcome_side = directions[side]
-        except KeyError as exc:
-            raise ValueError(f"unsupported order side: {side}") from exc
-
-        payload: dict[str, Any] = {
-            "ticker": ticker,
-            "client_order_id": str(uuid.uuid4()),
-            "action": action,
-            "side": outcome_side,
-            "count": quantity,
-            "time_in_force": "immediate_or_cancel",
-        }
-        payload[f"{outcome_side}_price"] = price
-        return {
-            "simulated": True,
-            "status": "simulated_filled",
-            "order_type": type,
-            "payload": payload,
-        }
+        results: list[OrderExecutionResult] = []
+        for request, raw in zip(orders, raw_results, strict=True):
+            raw = raw if isinstance(raw, dict) else {}
+            error = raw.get("error") or {}
+            filled = count_to_int(raw.get("fill_count", raw.get("fill_count_fp")))
+            remaining = count_to_int(
+                raw.get("remaining_count", raw.get("remaining_count_fp"))
+            )
+            if error:
+                status = "rejected"
+            elif filled == request.quantity and remaining == 0:
+                status = "filled"
+            else:
+                status = "partial"
+            results.append(
+                OrderExecutionResult(
+                    client_order_id=str(
+                        raw.get("client_order_id", request.client_order_id)
+                    ),
+                    order_id=raw.get("order_id"),
+                    ticker=request.ticker,
+                    requested_quantity=request.quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=remaining,
+                    average_fill_price=raw.get("average_fill_price"),
+                    fees=raw.get("average_fee_paid"),
+                    status=status,
+                    error_code=error.get("code"),
+                    error_message=error.get("message"),
+                )
+            )
+        return results

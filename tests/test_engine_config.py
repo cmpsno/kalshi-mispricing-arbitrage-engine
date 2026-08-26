@@ -40,3 +40,19 @@ def test_engine_settings_reject_invalid_boolean(
 
     with pytest.raises(ConfigError, match="DRY_RUN"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    ("base_url", "ws_url"),
+    [
+        ("https://api.elections.kalshi.com/trade-api/v2", DEMO_WS_URL),
+        ("https://external-api.demo.kalshi.co/trade-api/v2",
+         "wss://api.elections.kalshi.com/trade-api/ws/v2"),
+    ],
+)
+def test_live_orders_require_demo_hosts(base_url: str, ws_url: str) -> None:
+    with pytest.raises(ConfigError, match="demo REST and WebSocket"):
+        Settings(
+            api_key_id="demo-key", private_key_path=Path("private.pem"),
+            base_url=base_url, ws_url=ws_url, dry_run=False,
+        )

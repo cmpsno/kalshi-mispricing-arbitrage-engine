@@ -69,6 +69,16 @@ CREATE TABLE IF NOT EXISTS opportunities (
     details_json TEXT,
     executed BOOLEAN DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS execution_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id TEXT NOT NULL,
+    attempted_at INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    results_json TEXT NOT NULL,
+    FOREIGN KEY (opportunity_id) REFERENCES opportunities(id)
+);
+CREATE INDEX IF NOT EXISTS idx_execution_attempts_opportunity
+    ON execution_attempts(opportunity_id);
 """
 
 
@@ -356,8 +366,39 @@ class Database:
         )
         await db.commit()
 
+    async def save_execution_attempt(
+        self,
+        opportunity_id: str,
+        status: str,
+        results: list[dict],
+    ) -> None:
+        if status not in {"filled", "partial", "rejected"}:
+            raise ValueError("unsupported execution status")
+        db = await self._db()
+        await db.execute(
+            """
+            INSERT INTO execution_attempts (
+                opportunity_id, attempted_at, status, results_json
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                opportunity_id,
+                _to_ms(datetime.now(UTC)),
+                status,
+                json.dumps(results, separators=(",", ":"), default=str),
+            ),
+        )
+        await db.commit()
+
     async def table_count(self, table: str) -> int:
-        if table not in {"events", "markets", "order_books", "trades", "opportunities"}:
+        if table not in {
+            "events",
+            "markets",
+            "order_books",
+            "trades",
+            "opportunities",
+            "execution_attempts",
+        }:
             raise ValueError("unsupported table")
         db = await self._db()
         cursor = await db.execute(f"SELECT COUNT(*) AS count FROM {table}")

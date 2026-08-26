@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 from kalshi_client.config import DEMO_BASE_URL, ConfigError
 
 DEMO_WS_URL = "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2"
+DEMO_REST_HOST = "external-api.demo.kalshi.co"
+DEMO_WS_HOST = "external-api-ws.demo.kalshi.co"
 
 
 def _parse_bool(name: str, value: str) -> bool:
@@ -67,6 +69,12 @@ class Settings:
         websocket = urlsplit(self.ws_url)
         if websocket.scheme != "wss" or not websocket.netloc:
             raise ConfigError("KALSHI_WS_URL must be an absolute wss:// URL")
+        if not self.dry_run and (
+            rest.hostname != DEMO_REST_HOST or websocket.hostname != DEMO_WS_HOST
+        ):
+            raise ConfigError(
+                "DRY_RUN=false is supported only with Kalshi demo REST and WebSocket hosts"
+            )
 
     @classmethod
     def from_env(cls) -> Settings:

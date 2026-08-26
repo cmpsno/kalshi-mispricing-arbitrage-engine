@@ -1,4 +1,4 @@
-"""Async orchestration loop for ingestion, detection, sizing, and simulation."""
+"""Async orchestration loop for ingestion, detection, sizing, and execution."""
 
 from __future__ import annotations
 
@@ -73,7 +73,9 @@ async def run_engine(settings: Settings) -> None:
                 )
                 for opportunity in opportunities:
                     quantity = calculate_max_quantity(
-                        opportunity, settings.max_collateral_cents
+                        opportunity,
+                        settings.max_collateral_cents,
+                        live=not settings.dry_run,
                     )
                     if quantity > 0:
                         await execute_opportunity(

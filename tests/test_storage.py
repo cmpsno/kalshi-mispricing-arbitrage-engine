@@ -77,11 +77,17 @@ async def test_database_round_trips_engine_models(tmp_path: Path) -> None:
             details={"yes_ask": 45, "no_ask": 50},
         )
         await db.save_opportunity(opportunity)
+        await db.save_execution_attempt(
+            opportunity.id,
+            "partial",
+            [{"status": "partial", "order_id": "order-1"}],
+        )
 
         assert await db.table_count("events") == 1
         assert await db.table_count("markets") == 1
         assert await db.table_count("order_books") == 1
         assert await db.table_count("trades") == 1
+        assert await db.table_count("execution_attempts") == 1
         assert await db.get_recent_opportunities() == [opportunity]
 
 

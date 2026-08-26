@@ -72,6 +72,8 @@ Replay stored order book history. Measure signal count, edge, persistence, reali
 
 Manage orders in the demo environment, including placement, tracking, cancellation, partial fills, rejections, stale quotes, and execution races.
 
+Current implementation submits validated IOC limit-order batches to Kalshi demo only, caps each opportunity at $10 collateral, and reports partial-fill exposure for manual review. Automatic cancellation reconciliation and unwind behavior remain future work.
+
 ### Phase 7 — Risk controls
 
 Before any live-money work, add position limits, maximum daily loss, a kill switch, and a complete audit trail of orders and decisions.

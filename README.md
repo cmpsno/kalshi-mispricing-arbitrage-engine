@@ -2,9 +2,9 @@
 
 [![Tests](https://github.com/isaiahcampusano/kalshi-mispricing-arbitrage-engine/actions/workflows/tests.yml/badge.svg)](https://github.com/isaiahcampusano/kalshi-mispricing-arbitrage-engine/actions/workflows/tests.yml)
 
-An incremental, test-first project for studying structural price inconsistencies on Kalshi. It includes the original Phase 0 authenticated request plus a local, asynchronous engine for REST ingestion, WebSocket order books and trades, SQLite persistence, structural detection, collateral sizing, and simulated execution.
+An incremental, test-first project for studying structural price inconsistencies on Kalshi. It includes the original Phase 0 authenticated request plus a local, asynchronous engine for REST ingestion, WebSocket order books and trades, SQLite persistence, structural detection, collateral sizing, dry runs, and demo order submission.
 
-No live-money execution is implemented. Order payload construction remains simulation-only even if `DRY_RUN=false`.
+Real-money execution is not implemented. Setting `DRY_RUN=false` sends IOC limit orders only when both configured endpoints are Kalshi demo hosts; production hosts are rejected during configuration.
 
 ## Phase 0 setup
 
@@ -78,18 +78,26 @@ The engine will:
 3. Authenticate the current Trade API v2 WebSocket handshake and subscribe to `orderbook_delta` and `trade`.
 4. Reconstruct full order books from snapshots and deltas.
 5. Scan every two seconds for complement, event-sum, and strike-ladder inconsistencies.
-6. Log structured JSON opportunities and simulated order legs.
+6. Log structured JSON opportunities and either simulate their legs or submit all legs as one demo batch.
 
 Relevant settings:
 
 | Variable | Default | Purpose |
 |---|---:|---|
 | `KALSHI_WS_URL` | demo WebSocket v2 URL | Streaming endpoint |
-| `MAX_COLLATERAL_CENTS` | `1000000` | Maximum simulated collateral |
-| `DRY_RUN` | `true` | Log only; no execution attempt |
+| `MAX_COLLATERAL_CENTS` | `1000000` | Maximum collateral used for sizing; transmitted demo orders are always capped at `1000` cents per opportunity |
+| `DRY_RUN` | `true` | `true` logs only; `false` enables demo-only batch submission |
 | `KALSHI_DATABASE_PATH` | `kalshi_arbitrage.db` | Local SQLite database |
 | `KALSHI_SCAN_INTERVAL_SECONDS` | `2` | Detector interval |
 | `KALSHI_MARKET_LIMIT` | `1000` | Maximum markets in the initial sync |
+
+### Demo order submission
+
+Keep `DRY_RUN=true` until you have inspected detected opportunities and logs. To transmit orders in Kalshi's demo environment, retain the demo REST and WebSocket URLs from `.env.example`, set `DRY_RUN=false`, and start the engine normally.
+
+Every leg is submitted as an immediate-or-cancel limit order through Kalshi's current event-order batch endpoint. Batch submission is not atomic: one leg can fill while another partially fills or is rejected. The engine records every aggregate result and its per-leg details in `execution_attempts`, and marks an opportunity executed only when every leg fills completely. Otherwise it emits an `arbitrage_execution_exposure` error for manual review; it does not automatically unwind residual demo positions.
+
+The live path rejects opportunities above $10 (1,000 cents) of collateral regardless of `MAX_COLLATERAL_CENTS`. It also rejects production endpoints, invalid or empty legs, invalid prices, and non-positive quantities before sending a request. This demo capability is for testing execution behavior and is not financial advice.
 
 ## Important specification corrections
 

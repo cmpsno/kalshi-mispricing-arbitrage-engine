@@ -208,3 +208,49 @@ class ArbitrageOpportunity(EngineModel):
     required_collateral_cents: int
     confidence_score: float = Field(ge=0.0, le=1.0)
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+OrderAction = Literal["buy", "sell"]
+OrderSide = Literal["yes", "no"]
+ExecutionStatus = Literal["dry_run", "filled", "partial", "rejected"]
+
+
+class OrderRequest(EngineModel):
+    ticker: str = Field(min_length=1)
+    action: OrderAction
+    side: OrderSide
+    price: int = Field(ge=1, le=99)
+    quantity: int = Field(ge=1)
+    client_order_id: str = Field(min_length=1)
+
+    def to_api_payload(self) -> dict[str, Any]:
+        if (self.action, self.side) in {("buy", "yes"), ("sell", "no")}:
+            book_side = "bid"
+        else:
+            book_side = "ask"
+        yes_price = self.price if self.side == "yes" else 100 - self.price
+        payload: dict[str, Any] = {
+            "ticker": self.ticker,
+            "client_order_id": self.client_order_id,
+            "side": book_side,
+            "count": f"{self.quantity}.00",
+            "price": f"{yes_price / 100:.4f}",
+            "time_in_force": "immediate_or_cancel",
+            "self_trade_prevention_type": "taker_at_cross",
+            "cancel_order_on_pause": True,
+        }
+        return payload
+
+
+class OrderExecutionResult(EngineModel):
+    client_order_id: str
+    order_id: str | None = None
+    ticker: str
+    requested_quantity: int
+    filled_quantity: int = 0
+    remaining_quantity: int = 0
+    average_fill_price: str | None = None
+    fees: str | None = None
+    status: ExecutionStatus
+    error_code: str | None = None
+    error_message: str | None = None

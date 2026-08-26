@@ -85,3 +85,4 @@ def test_position_size_adds_five_percent_collateral_buffer() -> None:
     opportunity = detect_same_market_cross([market("BINARY", yes_ask=45, no_ask=50)])[0]
 
     assert calculate_max_quantity(opportunity, 1_000) == 10
+    assert calculate_max_quantity(opportunity, 100_000, live=True) == 10

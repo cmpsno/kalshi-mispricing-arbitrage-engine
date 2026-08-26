@@ -1,4 +1,4 @@
-"""Structural arbitrage detection, sizing, and simulated execution."""
+"""Structural arbitrage detection, sizing, and demo-safe execution."""
 
 from .detectors import (
     detect_same_market_cross,
