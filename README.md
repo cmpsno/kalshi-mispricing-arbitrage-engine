@@ -91,6 +91,22 @@ Relevant settings:
 | `KALSHI_SCAN_INTERVAL_SECONDS` | `2` | Detector interval |
 | `KALSHI_MARKET_LIMIT` | `1000` | Maximum markets in the initial sync |
 
+## Streamlit dashboard
+
+The dashboard provides auto-refreshing metrics, profit and activity charts, detector summaries, and a table of recent opportunities. It reads the engine's SQLite database in read-only mode and uses the same `KALSHI_DATABASE_PATH` setting as the engine.
+
+Start the engine in one terminal, then start the dashboard in another terminal using the same virtual environment:
+
+```shell
+python -m src.cli run-engine
+```
+
+```shell
+streamlit run dashboard.py
+```
+
+Streamlit opens the dashboard at `http://localhost:8501`. Use the sidebar to change the auto-refresh interval, history window, or row limit. If the database or its `opportunities` table does not exist yet, the dashboard displays an initialization message instead of failing.
+
 ### Demo order submission
 
 Keep `DRY_RUN=true` until you have inspected detected opportunities and logs. To transmit orders in Kalshi's demo environment, retain the demo REST and WebSocket URLs from `.env.example`, set `DRY_RUN=false`, and start the engine normally.
