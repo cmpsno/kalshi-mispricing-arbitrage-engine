@@ -2,6 +2,7 @@
 requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
+
 [project]
 name = "kalshi-mispricing-arbitrage-engine"
 version = "0.1.0"
@@ -37,3 +38,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["kalshi_client*", "src*"]
+
+[tool.poetry]
+package-mode = false
