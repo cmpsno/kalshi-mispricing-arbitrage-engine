@@ -48,6 +48,11 @@ class WebSocketManager:
         self._channels_by_ticker: set[tuple[str, str]] = set()
         self._request_ids = count(1)
         self._connector = connector
+        # Last seen WebSocket sequence number per ticker, for gap
+        # detection (Phase 3 prerequisite: the paper simulator must not
+        # trust books built from a delta stream with a hole in it).
+        # Messages without a sequence number are accepted as before.
+        self._last_seq: dict[str, int] = {}
         self._initialized = True
 
     @classmethod
@@ -156,6 +161,30 @@ class WebSocketManager:
         message_type = message.get("type")
         payload = message.get("msg", {})
 
+        if message_type in ("orderbook_snapshot", "orderbook_delta"):
+            ticker = payload.get("market_ticker")
+            seq = message.get("seq")
+            if isinstance(ticker, str) and isinstance(seq, int):
+                last_seq = self._last_seq.get(ticker)
+                if message_type == "orderbook_snapshot":
+                    self._last_seq[ticker] = seq
+                elif last_seq is not None and seq != last_seq + 1:
+                    # Sequence gap: a delta was missed, so the locally
+                    # reconstructed book can no longer be trusted.
+                    # Drop the in-memory book and this delta; the next
+                    # snapshot rebuilds it from full state.
+                    self.orderbooks.pop(ticker, None)
+                    self._last_seq[ticker] = seq
+                    await log.aerror(
+                        "websocket_sequence_gap",
+                        ticker=ticker,
+                        expected_seq=last_seq + 1,
+                        received_seq=seq,
+                    )
+                    return
+                else:
+                    self._last_seq[ticker] = seq
+
         if message_type == "orderbook_snapshot":
             await self._handle_orderbook_snapshot(payload)
         elif message_type == "orderbook_delta":
@@ -191,7 +220,15 @@ class WebSocketManager:
 
     async def _handle_orderbook_delta(self, payload: dict[str, Any]) -> None:
         ticker = payload["market_ticker"]
-        existing = self.orderbooks.get(ticker) or OrderBook(ticker=ticker)
+        if ticker not in self.orderbooks:
+            # No base snapshot to apply this delta to (e.g. after a
+            # sequence gap invalidated the book). Wait for a snapshot.
+            await log.aerror(
+                "websocket_delta_without_snapshot",
+                ticker=ticker,
+            )
+            return
+        existing = self.orderbooks[ticker]
         side = payload["side"]
         raw_price = dollars_to_cents(payload["price_dollars"])
         price = raw_price if side == "yes" else 100 - raw_price

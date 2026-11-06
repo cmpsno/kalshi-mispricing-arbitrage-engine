@@ -86,6 +86,9 @@ Relevant settings:
 |---|---:|---|
 | `KALSHI_WS_URL` | demo WebSocket v2 URL | Streaming endpoint |
 | `MAX_COLLATERAL_CENTS` | `1000000` | Maximum collateral used for sizing; transmitted demo orders are always capped at `1000` cents per opportunity |
+| `PAPER_ENABLED` | `false` | `true` runs the engine in local paper-trading mode instead of submitting demo orders |
+| `PAPER_INITIAL_CASH_CENTS` | `100000` | Starting paper capital ($1,000); fixed when the paper account is created |
+| `PAPER_MAX_BOOK_AGE_SECONDS` | `5` | A leg's order book older than this is stale and its opportunity is rejected |
 | `DRY_RUN` | `true` | `true` logs only; `false` enables demo-only batch submission |
 | `KALSHI_DATABASE_PATH` | `kalshi_arbitrage.db` | Local SQLite database |
 | `KALSHI_SCAN_INTERVAL_SECONDS` | `2` | Detector interval |
@@ -114,6 +117,76 @@ Keep `DRY_RUN=true` until you have inspected detected opportunities and logs. To
 Every leg is submitted as an immediate-or-cancel limit order through Kalshi's current event-order batch endpoint. Batch submission is not atomic: one leg can fill while another partially fills or is rejected. The engine records every aggregate result and its per-leg details in `execution_attempts`, and marks an opportunity executed only when every leg fills completely. Otherwise it emits an `arbitrage_execution_exposure` error for manual review; it does not automatically unwind residual demo positions.
 
 The live path rejects opportunities above $10 (1,000 cents) of collateral regardless of `MAX_COLLATERAL_CENTS`. It also rejects production endpoints, invalid or empty legs, invalid prices, and non-positive quantities before sending a request. This demo capability is for testing execution behavior and is not financial advice.
+
+### Paper trading (local simulation)
+
+Paper trading is **not** the demo exchange above. It is a local simulation
+that runs in the engine instead of submitting demo orders: set
+`PAPER_ENABLED=true` and detected opportunities are simulated against the
+observed order books, with results recorded in SQLite. Nothing is sent to
+any Kalshi host in paper mode, and no real money is involved.
+
+How orders and fills are simulated (`src/paper/simulator.py`):
+
+- Each opportunity's legs become IOC limit orders at the detector's prices.
+- A leg fills only up to the displayed size at prices at or better than its
+  limit, walking the book's levels; the fill price is the volume-weighted
+  average of the levels consumed. A detector signal alone is never a fill,
+  and a quote without a backing book is never a fill.
+- NO legs trade on the complementary price scale (NO ask = 100 − YES bid,
+  NO bid = 100 − YES ask).
+- Every leg's book must be no older than `PAPER_MAX_BOOK_AGE_SECONDS`
+  (default 5 seconds) at order time, or the whole opportunity is rejected.
+  Sequence gaps in the WebSocket feed invalidate the affected book until a
+  fresh snapshot arrives.
+- Unfilled quantity expires immediately (IOC). Partial fills are recorded
+  per leg, so a half-filled arbitrage keeps its residual exposure visible
+  instead of being averaged away.
+- Positions close only by offsetting trades (`python -m src.cli
+  paper-close --ticker … --side … --direction … --quantity …`). There is
+  no automatic settlement yet: the outcome source for settled markets has
+  not been verified, so positions in expired markets stay open and flagged.
+
+Accounting (`PAPER_TRADING_PLAN.md`, `src/paper/report.py`):
+
+- Initial paper capital is `PAPER_INITIAL_CASH_CENTS` (default $1,000),
+  fixed when the account is created. Cash is the actual paper balance:
+  buys decrease it, sells increase it.
+- Equity = cash + mark-to-market value of open positions (long YES at the
+  best YES bid, long NO at the best NO bid, shorts at the cost to cover).
+  Reserved collateral (margin) is reported separately and never added to
+  equity. Net P&L = realized P&L + unrealized P&L; ROI = net P&L ÷ initial
+  capital, with a realized-only ROI alongside it.
+- **Fees are not included.** No verified Kalshi fee formula is implemented
+  yet, so every paper figure is gross of fees and labelled as such.
+  Slippage beyond the book walk is not modelled either: fills use
+  displayed prices and sizes only.
+- The dashboard's **Paper Trading Performance** section shows initial
+  capital, cash, reserved collateral, equity, realized/unrealized/net P&L,
+  ROI, simulated orders (filled / partially filled / unfilled), capital
+  deployed, the current week's return (Monday–Sunday, America/New_York),
+  an equity curve, open positions, recent fills, and the ledger history.
+  Detector opportunities are shown separately from trades. If no paper
+  account exists, the section says so instead of showing zeros.
+- Reported performance covers only the period in the paper ledger (check
+  the section's period start/end and last-update time). Sample/demo
+  opportunity figures elsewhere on the dashboard are not paper results and
+  are never combined with them.
+
+Known limitations: fees unverified and excluded; settlement not
+implemented; whole-cent prices and whole-contract quantities (sub-cent
+prices and fractional sizes are rounded/truncated by the existing engine
+models); books are trusted only up to sequence-gap detection and the
+5-second freshness gate; a crash between the simulator's sequential
+database writes could leave a partial batch (the ledger is append-only,
+so the partial state stays visible rather than silently corrected). See
+`PAPER_TRADING_AUDIT.md` and `PAPER_TRADING_PLAN.md` for the audit and
+the full measurement model.
+
+```shell
+python -m src.cli paper-report          # overall paper performance
+python -m src.cli paper-report --week   # current week's performance
+```
 
 ## Important specification corrections
 

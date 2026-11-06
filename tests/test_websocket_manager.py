@@ -139,3 +139,105 @@ async def test_websocket_applies_deltas_and_persists_trades(
             assert await db.table_count("order_books") == 2
             assert await db.table_count("trades") == 1
     WebSocketManager.reset_singleton()
+
+
+@pytest.mark.asyncio
+async def test_websocket_sequence_gap_invalidates_book_until_snapshot(
+    tmp_path: Path, private_key: rsa.RSAPrivateKey
+) -> None:
+    WebSocketManager.reset_singleton()
+    async with Database(tmp_path / "seq.db") as db:
+        await db.upsert_market(
+            Market(
+                ticker="MARKET",
+                event_ticker="EVENT",
+                series_ticker="SERIES",
+                status="active",
+            )
+        )
+        async with KalshiClient(
+            api_key_id="demo-key",
+            private_key=private_key,
+            base_url=DEMO_BASE_URL,
+            transport=httpx.MockTransport(
+                lambda request: pytest.fail(f"unexpected REST call: {request.url}")
+            ),
+        ) as client:
+            manager = WebSocketManager(db, client, DEMO_WS_URL)
+            await manager.handle_message(
+                {
+                    "type": "orderbook_snapshot",
+                    "seq": 10,
+                    "msg": {
+                        "market_ticker": "MARKET",
+                        "yes_dollars_fp": [["0.4000", "2.00"]],
+                        "no_dollars_fp": [["0.5500", "3.00"]],
+                    },
+                }
+            )
+            assert manager.orderbooks["MARKET"].bids[0].price == 40
+
+            # In-sequence delta applies.
+            await manager.handle_message(
+                {
+                    "type": "orderbook_delta",
+                    "seq": 11,
+                    "msg": {
+                        "market_ticker": "MARKET",
+                        "side": "yes",
+                        "price_dollars": "0.4000",
+                        "delta_fp": "1.00",
+                        "ts_ms": 1_703_123_456_789,
+                    },
+                }
+            )
+            assert manager.orderbooks["MARKET"].bids[0].size == 3
+
+            # Gap (12 missing): the delta is dropped and the book is
+            # invalidated, so the paper simulator cannot trust it.
+            await manager.handle_message(
+                {
+                    "type": "orderbook_delta",
+                    "seq": 13,
+                    "msg": {
+                        "market_ticker": "MARKET",
+                        "side": "yes",
+                        "price_dollars": "0.4000",
+                        "delta_fp": "1.00",
+                        "ts_ms": 1_703_123_456_790,
+                    },
+                }
+            )
+            assert "MARKET" not in manager.orderbooks
+
+            # The next in-sequence delta has no base snapshot to apply
+            # to, so it is dropped too.
+            await manager.handle_message(
+                {
+                    "type": "orderbook_delta",
+                    "seq": 14,
+                    "msg": {
+                        "market_ticker": "MARKET",
+                        "side": "yes",
+                        "price_dollars": "0.4000",
+                        "delta_fp": "1.00",
+                        "ts_ms": 1_703_123_456_791,
+                    },
+                }
+            )
+            assert "MARKET" not in manager.orderbooks
+
+            # A fresh snapshot rebuilds the book.
+            await manager.handle_message(
+                {
+                    "type": "orderbook_snapshot",
+                    "seq": 20,
+                    "msg": {
+                        "market_ticker": "MARKET",
+                        "yes_dollars_fp": [["0.4200", "2.00"]],
+                        "no_dollars_fp": [["0.5500", "3.00"]],
+                    },
+                }
+            )
+            assert manager.orderbooks["MARKET"].bids[0].price == 42
+    WebSocketManager.reset_singleton()

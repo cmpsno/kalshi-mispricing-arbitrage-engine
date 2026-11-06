@@ -8,6 +8,7 @@ system sans stack is used as the closest available match.
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -17,6 +18,7 @@ import streamlit as st
 from src.dashboard_data import (
     DashboardDatabaseError,
     load_opportunities,
+    load_paper_summary,
     summarize_opportunities,
 )
 
@@ -50,6 +52,18 @@ PLOTLY_GREENS = ["#28cc95", "#0E7A5F", "#5ED3A6", "#8A8F98"]
 
 def dollars(cents: float) -> str:
     return f"${cents / 100:,.2f}"
+
+
+def dollars_or_dash(cents: float | None) -> str:
+    return dollars(cents) if cents is not None else "—"
+
+
+def percent_or_dash(value: float | None) -> str:
+    return f"{value:.2f}%" if value is not None else "—"
+
+
+def format_week_ms(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1_000, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def label_algorithm(name: str) -> str:
@@ -287,6 +301,196 @@ def render_dashboard() -> None:
 
 
 render_dashboard()
+
+
+# ----------------------------------------------------------------------------
+# Paper Trading Performance (Phase 5)
+#
+# Figures here come only from the paper ledger (paper_accounts,
+# paper_orders, paper_fills, paper_ledger_events, paper_equity_snapshots).
+# Detector opportunities above are signals, not trades, and sample
+# opportunities are never mixed into paper results.
+# ----------------------------------------------------------------------------
+@st.fragment(run_every=refresh_interval)
+def render_paper_trading() -> None:
+    """Render the paper-trading performance section."""
+
+    st.divider()
+    st.subheader("Paper Trading Performance")
+    st.markdown(
+        "Local paper simulation — fills are simulated against observed "
+        "order books and recorded in the paper ledger. Gross of fees. "
+        "Not real money, and not orders sent to Kalshi (demo or otherwise). "
+        "Detector opportunities above are signals, not trades."
+    )
+
+    try:
+        summary = load_paper_summary(database_path)
+    except DashboardDatabaseError as exc:
+        st.warning(str(exc), icon="⚠️")
+        return
+
+    if summary is None:
+        st.info(
+            "No paper trading yet. Run the engine once with "
+            "`PAPER_ENABLED=true` to create the $1,000 paper account, "
+            "then this section will show simulated fills and returns."
+        )
+        return
+
+    overall = summary["overall"]
+    weekly = summary["weekly"]
+
+    if overall["equity_cents"] is None:
+        st.warning(
+            "Equity is unavailable right now: the latest order books for "
+            f"open positions are stale ({', '.join(overall['mtm_stale_tickers'])}). "
+            "Cash and realized P&L below are still exact; unrealized P&L "
+            "and equity are withheld rather than guessed.",
+            icon="⚠️",
+        )
+
+    metric_columns = st.columns(4)
+    metric_columns[0].metric(
+        "Initial paper capital", dollars(overall["initial_capital_cents"])
+    )
+    metric_columns[1].metric("Current cash", dollars(overall["cash_cents"]))
+    metric_columns[2].metric(
+        "Reserved collateral", dollars(overall["margin_cents"])
+    )
+    metric_columns[3].metric(
+        "Current equity", dollars_or_dash(overall["equity_cents"])
+    )
+    metric_columns = st.columns(4)
+    metric_columns[0].metric(
+        "Realized P&L", dollars(overall["realized_pnl_cents"])
+    )
+    metric_columns[1].metric(
+        "Unrealized P&L", dollars_or_dash(overall["unrealized_pnl_cents"])
+    )
+    metric_columns[2].metric("Net P&L", dollars_or_dash(overall["net_pnl_cents"]))
+    metric_columns[3].metric("ROI", percent_or_dash(overall["roi_percent"]))
+    st.caption(
+        "ROI = net P&L (realized + unrealized) ÷ initial paper capital. "
+        f"Realized-only ROI: {percent_or_dash(overall['roi_realized_only_percent'])}. "
+        "Fees are not included."
+    )
+
+    metric_columns = st.columns(4)
+    metric_columns[0].metric("Simulated orders", f"{overall['simulated_orders']:,}")
+    metric_columns[1].metric("Filled orders", f"{overall['filled_orders']:,}")
+    metric_columns[2].metric("Unfilled orders", f"{overall['unfilled_orders']:,}")
+    metric_columns[3].metric(
+        "Capital deployed", dollars(overall["capital_deployed_cents"])
+    )
+    st.caption(
+        f"Detector opportunities (signals, shown separately): "
+        f"{overall['detector_opportunities']:,}. Fill rate by quantity: "
+        f"{overall['fill_rate_by_quantity']:.0%}"
+        if overall["fill_rate_by_quantity"] is not None
+        else "No simulated orders yet, so no fill rate."
+    )
+
+    st.subheader("This week")
+    if weekly["reconstructable"]:
+        st.markdown(
+            f"Week: **{format_week_ms(weekly['period_start_ms'])}** to "
+            f"**{format_week_ms(weekly['period_end_ms'])}** "
+            f"({weekly['timezone']}). Starting equity "
+            f"**{dollars(weekly['starting_equity_cents'])}**, ending equity "
+            f"**{dollars(weekly['ending_equity_cents'])}**, net P&L "
+            f"**{dollars(weekly['net_pnl_cents'])}**, ROI "
+            f"**{percent_or_dash(weekly['roi_percent_vs_initial_capital'])}** "
+            f"vs initial capital. Data: {weekly['data_basis']}."
+        )
+    else:
+        st.info(
+            "This week's return cannot be reconstructed yet — no equity "
+            "snapshot covers the week boundaries. Run the engine in paper "
+            "mode and snapshots will be recorded after every simulation."
+        )
+
+    equity_curve = summary["equity_curve"]
+    if not equity_curve.empty:
+        equity_chart = px.line(
+            equity_curve,
+            x="detected_at",
+            y="equity_cents",
+            title="Paper equity over time (cents)",
+            labels={
+                "detected_at": "Time (UTC)",
+                "equity_cents": "Equity (cents)",
+            },
+            template="plotly_white",
+        )
+        equity_chart.update_layout(font_family="system-ui, sans-serif")
+        st.plotly_chart(equity_chart, width="stretch")
+    else:
+        st.info("No equity snapshots yet — the curve appears after the first fill.")
+
+    open_positions = overall["open_positions"]
+    if open_positions:
+        st.subheader("Open positions")
+        positions = pd.DataFrame(open_positions)
+        positions["cost_basis_cents"] = positions["cost_basis_cents"].map(dollars)
+        positions = positions.rename(
+            columns={
+                "ticker": "Market",
+                "side": "Side",
+                "direction": "Direction",
+                "quantity": "Contracts",
+                "cost_basis_cents": "Cost basis",
+            }
+        )
+        st.dataframe(positions, width="stretch", hide_index=True)
+
+    fills = summary["fills"]
+    if not fills.empty:
+        st.subheader("Recent simulated fills")
+        fill_view = fills.copy()
+        fill_view["fill_price_cents"] = fill_view["fill_price_cents"].map(dollars)
+        fill_view["total_cents"] = fill_view["total_cents"].map(dollars)
+        fill_view = fill_view.rename(
+            columns={
+                "filled_at": "Filled (UTC)",
+                "ticker": "Market",
+                "side": "Side",
+                "direction": "Direction",
+                "filled_quantity": "Contracts",
+                "fill_price_cents": "Avg fill price",
+                "total_cents": "Total",
+            }
+        )
+        st.dataframe(fill_view, width="stretch", hide_index=True, height=300)
+
+    ledger = summary["ledger"]
+    if not ledger.empty:
+        st.subheader("Ledger history")
+        ledger_view = ledger.copy()
+        ledger_view["cash_delta_cents"] = ledger_view["cash_delta_cents"].map(dollars)
+        ledger_view["reserved_delta_cents"] = ledger_view[
+            "reserved_delta_cents"
+        ].map(dollars)
+        ledger_view["realized_pnl_cents"] = ledger_view["realized_pnl_cents"].map(
+            dollars
+        )
+        ledger_view = ledger_view.rename(
+            columns={
+                "ts": "Time (UTC)",
+                "event_type": "Event",
+                "ticker": "Market",
+                "cash_delta_cents": "Cash Δ",
+                "reserved_delta_cents": "Reserved Δ",
+                "realized_pnl_cents": "Realized P&L",
+            }
+        )
+        st.dataframe(ledger_view, width="stretch", hide_index=True, height=300)
+
+    if summary["last_update_ms"] is not None:
+        st.caption(f"Last paper data update: {format_week_ms(summary['last_update_ms'])}")
+
+
+render_paper_trading()
 
 st.sidebar.divider()
 st.sidebar.caption(

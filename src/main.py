@@ -12,6 +12,8 @@ from .arbitrage.executor import execute_opportunity
 from .arbitrage.risk import calculate_max_quantity
 from .client import KalshiClient
 from .config import Settings
+from .paper.config import PaperSettings
+from .paper.service import PaperService
 from .storage import Database
 from .websocket_manager import WebSocketManager
 
@@ -47,11 +49,23 @@ async def initial_rest_sync(
 
 async def run_engine(settings: Settings) -> None:
     configure_logging()
+    paper_settings = PaperSettings.from_env()
     async with (
         Database(settings.database_path) as db,
         KalshiClient.from_settings(settings) as client,
     ):
         tickers = await initial_rest_sync(db, client, settings.market_limit)
+        ws = WebSocketManager(db, client, settings.ws_url)
+        paper_service = None
+        if paper_settings.enabled:
+            paper_service = PaperService(db, paper_settings)
+            await paper_service.ensure_account()
+            await log.ainfo(
+                "paper_trading_enabled",
+                initial_cash_cents=paper_settings.initial_cash_cents,
+                max_book_age_seconds=paper_settings.max_book_age_seconds,
+                note="local simulation only; demo-host submission disabled",
+            )
         ws = WebSocketManager(db, client, settings.ws_url)
         listener: asyncio.Task[None] | None = None
         try:
@@ -78,13 +92,22 @@ async def run_engine(settings: Settings) -> None:
                         live=not settings.dry_run,
                     )
                     if quantity > 0:
-                        await execute_opportunity(
-                            opportunity,
-                            quantity,
-                            dry_run=settings.dry_run,
-                            client=client,
-                            db=db,
-                        )
+                        if paper_service is not None:
+                            # Paper mode replaces the demo executor
+                            # entirely: fills are simulated locally
+                            # against observed books, nothing is sent
+                            # to any Kalshi host.
+                            await paper_service.simulate_opportunity(
+                                opportunity, quantity, ws.orderbooks
+                            )
+                        else:
+                            await execute_opportunity(
+                                opportunity,
+                                quantity,
+                                dry_run=settings.dry_run,
+                                client=client,
+                                db=db,
+                            )
                 await asyncio.sleep(settings.scan_interval_seconds)
         finally:
             if listener is not None:
